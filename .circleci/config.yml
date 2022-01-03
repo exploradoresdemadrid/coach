@@ -1,0 +1,66 @@
+version: 2
+jobs:
+  test:
+    working_directory: ~/coach
+    parallelism: 1
+    shell: /bin/bash --login
+    docker:
+      - image: cimg/ruby:3.0-browsers
+        environment:
+          RAILS_ENV: test
+          RACK_ENV: test
+          PGHOST: 127.0.0.1
+          PGUSER: postgres
+      - image: cimg/postgres:12.7
+        environment:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: coach_test
+          POSTGRES_PASSWORD: postgres
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-dep-{{ checksum "Gemfile.lock" }}
+            - v1-dep-bundle-
+      - run: bundle check --path=vendor/bundle || bundle install --path=vendor/bundle --jobs=4 --retry=3
+      - save_cache:
+          key: v1-dep-{{ checksum "Gemfile.lock" }}
+          paths:
+            - vendor/bundle
+      - run:
+          command: bundle exec rspec --color --format documentation --require spec_helper --require rails_helper spec
+          environment:
+            RAILS_GROUPS: assets
+      - store_artifacts:
+          path: coverage
+          prefix: tests
+  build:
+    docker:
+      - image: cimg/ruby:3.0-browsers
+    steps:
+      - checkout
+      - run:
+          name: Setup VirtualEnv
+          command: |
+            echo 'export TAG=${CIRCLE_BRANCH}' >> $BASH_ENV
+            echo 'export IMAGE_NAME=coach' >> $BASH_ENV 
+            echo 'export ORG_NAME=exploradoresdemadrid' >> $BASH_ENV 
+      - setup_remote_docker:
+          docker_layer_caching: true
+          version: 20.10.11
+      - run:
+          name: Build & push to DockerHub 
+          command: |
+            docker build -t $ORG_NAME/$IMAGE_NAME:$TAG .
+            echo $DOCKER_PWD | docker login -u $DOCKER_LOGIN --password-stdin
+            docker push $ORG_NAME/$IMAGE_NAME:$TAG
+workflows:
+  version: 2
+  build:
+    jobs:
+      - test
+      - build:
+          filters:
+            branches:
+              only:
+                - master
